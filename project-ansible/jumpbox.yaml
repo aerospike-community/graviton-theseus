@@ -1,0 +1,15 @@
+---
+- name: setup a jumpbox
+  hosts: jumpbox
+  connection: local
+  remote_user: root
+  gather_facts: true
+  tags:
+    - jumpbox
+
+  roles:
+    - access
+    - aerolab
+    # TODO: drop steampipe dependency
+    - steampipe
+    - motd

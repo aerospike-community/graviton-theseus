@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+
+set -ex
+
+source "${CURRENT_PROJECT_ROOT}/project-scripts/common.sh"
+
+ANSIBLE_ENV_PLAYBOOK="${CURRENT_PROJECT_ROOT}"/project-ansible/project_environment.yaml
+
+if [[ $(aerolab client list -j | jq --arg ams_name "${TARGET_CLIENT_CLUSTER}" '[.[] | select (.ClientType=="tools") | select(.ClientName==$ams_name)] | length') -eq 0 ]]; then
+	aerolab client create tools \
+		-n "${TARGET_CLIENT_CLUSTER}" \
+		-c "${TARGET_CLIENT_INSTANCE_COUNT}" \
+		--instance-type "${TARGET_CLIENT_INSTANCE_TYPE}" \
+		--distro=centos \
+		--distro-version=9 \
+		--owner="${PROJECT_NAME}" \
+		--tags=project="${PROJECT_NAME}"
+fi
+
+refresh_known_hosts $(aerolab client list -j | jq -r --arg project_name "${PROJECT_NAME}" '.[] | select(.AwsTags.project == $project_name).PrivateIp')
+refresh_known_hosts $(aerolab cluster list -j | jq -r --arg project_name "${PROJECT_NAME}" '.[] | select(.AwsTags.project == $project_name).PrivateIp')
+
+ANSIBLE_STDOUT_CALLBACK=unixy ansible-playbook \
+	-f 64 \
+	-i /usr/local/bin/aerolab-ansible \
+	--extra-vars @"${CURRENT_PROJECT_ROOT}"/project-ansible/overrides.yaml \
+	"${ANSIBLE_ENV_PLAYBOOK}"
+
+refresh_known_hosts $(nodeattr -n -A)

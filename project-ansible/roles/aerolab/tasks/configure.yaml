@@ -1,0 +1,43 @@
+---
+- name: Configure Aerolab for GCP
+  ansible.builtin.shell: >
+    aerolab config backend
+    -t gcp
+    -o {{ _aerolab_config.gcp_config.gcp_project_name }}
+    -d {{ aerolab_working_dir }}
+  register: config_output
+  when: cloud_platform_is_gcp
+
+- ansible.builtin.shell: >
+    aerolab config defaults
+    -k '*.Zone' -v {{ _aerolab_config.gcp_config.zone }}
+  register: config_output_extended
+  when: cloud_platform_is_gcp
+
+- name: Configure Aerolab for AWS
+  ansible.builtin.shell: >
+    aerolab config backend
+    -t aws
+    -r {{ _aerolab_config.aws_config.aws_region }}
+    -d {{ aerolab_working_dir }}
+  register: config_output
+  when: cloud_platform_is_aws
+
+- name: Configure Aerolab FeaturesFilePath
+  ansible.builtin.shell: >
+    aerolab config defaults
+    -k '*.FeaturesFilePath'
+    -v {{ _aerolab_config.feature_file }}
+  register: aerolab_defaults_output
+
+- name: Configure Aerolab ChDir
+  ansible.builtin.shell: >
+    aerolab config defaults
+    -k '*.ChDir'
+    -v {{ artifacts_dir }}
+  register: aerolab_defaults_output
+
+- name: Install Aerolab showcommands
+  ansible.builtin.command:
+    cmd: aerolab showcommands
+    creates: /usr/local/bin/aerolab-ansible

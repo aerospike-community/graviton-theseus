@@ -1,0 +1,10 @@
+---
+- name: update-grub
+  command: grubby --update-kernel=ALL --args='psi=1'
+  notify:
+    - Reboot the host
+
+- name: Reboot the host
+  ansible.builtin.reboot:
+  when: inventory_hostname not in groups['jumpbox']
+  register: reboot_result

@@ -1,0 +1,6 @@
+---
+dependencies:
+  # Depends on cloud_platform_is_<platform> vars
+  - role: detect_cloud_platform
+  # Depends on artifacts_dir var
+  - role: artifacts_dir

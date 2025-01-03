@@ -1,0 +1,14 @@
+---
+- name: Gather facts
+  ansible.builtin.setup:
+    gather_subset:
+      - "hardware"
+      - "min"
+
+- name: Group hosts based on their OS
+  ansible.builtin.group_by:
+    key: "os_{{ ansible_facts['os_family'] | lower }}"
+
+- name: Group hosts based on architecture
+  ansible.builtin.group_by:
+    key: "arch_{{ ansible_facts['architecture'] | lower }}"

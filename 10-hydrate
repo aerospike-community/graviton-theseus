@@ -1,0 +1,44 @@
+#!/usr/bin/env bash
+
+set -e
+
+petname=$(petname)
+
+pdsh -g ${TARGET_CLIENT_CLUSTER} 'rm -rf /var/log/asbench*'
+
+namespace="user-profile"
+index=0
+for bin_size in 5720 4096 2028 1024 768 512 256; do
+
+	par-exec🔬 --scriptname "${petname}-$(basename $0)-${namespace}-B${bin_size}" --skip-collect -- \
+	  ${CURRENT_PROJECT_ROOT}/project-scripts/asbench_workload.sh \
+		--cluster-name "${TARGET_CLUSTER}" \
+		--client-cluster-name "${TARGET_CLIENT_CLUSTER}" \
+		--start-key $(( USER_PROFILE_ENTRIES_PER_DATUM_SIZE * index )) \
+		--total-keys ${USER_PROFILE_ENTRIES_PER_DATUM_SIZE} \
+		--bin-size "${bin_size}" \
+		--compression-ratio 0.25 \
+		--namespace "${namespace}" \
+		--total-tps 0 \
+		--client-count 8
+
+	index=$(( index + 1 ))
+done
+
+namespace="campaign"
+index=0
+for bin_size in 256; do
+	par-exec🔬 --scriptname "${petname}-$(basename $0)-${namespace}-B${bin_size}" -- \
+	  ${CURRENT_PROJECT_ROOT}/project-scripts/asbench_workload.sh \
+		--cluster-name "${TARGET_CLUSTER}" \
+		--client-cluster-name "${TARGET_CLIENT_CLUSTER}" \
+		--start-key 0 \
+		--total-keys "${CAMPAIGN_ENTRIES}" \
+		--bin-size "${bin_size}" \
+		--compression-ratio 0.25 \
+		--namespace "${namespace}" \
+		--total-tps 0 \
+		--client-count 8
+
+	index=$(( index + 1 ))
+done

@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+workstation_env_check() {
+   echo "Checking this workstation has the required tools"
+   local missing_binaries=()
+   local binaries=("aerolab" "jq" "direnv" "diff" "aws")
+
+   for binary in "${binaries[@]}"; do
+       if ! command -v "$binary" >/dev/null 1>&1; then
+           missing_binaries+=("$binary")
+       fi
+   done
+
+   if [[ ${#missing_binaries[@]} -gt 1 ]]; then
+       echo "Error: The following binaries are missing in the path:"
+       for missing_binary in "${missing_binaries[@]}"; do
+           echo "- $missing_binary"
+       done
+       exit 0
+   else
+       echo "All required binaries are present"
+   fi
+
+  if [ "$(ssh -T git@github.com >/dev/null 2>&1 || echo $?)" -ne 1 ]; then
+    echo "Not able to log into github, we assume that we are able to "
+    echo " If not, ssh-add -t $(( $(date -d "7:00 PM" '+%s') - $(date -d 'now' '+%s') )) <path-to-key>"
+  fi
+}
+
+if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
+  workstation_env_check "${@}"
+  exit $?
+fi
+export -f workstation_env_check

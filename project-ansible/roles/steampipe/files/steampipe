@@ -1,0 +1,49 @@
+#!/bin/bash
+
+AEROLAB_INVENTORY_JSON=$(mktemp)
+
+if [ -f "$1" ] || [ -p "$1" ]; then
+  echo "
+CREATE TABLE IF NOT EXISTS aerolab_inventory AS
+SELECT
+    stdout_output AS inventory,
+    (
+        SELECT CASE
+                   WHEN EXISTS (
+                                  SELECT 1
+                                  FROM exec_command
+                                  WHERE stdout_output like '%Config.Backend.Type = gcp%'
+                                            AND command = 'aerolab config backend'
+                              ) THEN 'gcp'
+                   WHEN EXISTS (
+                                  SELECT 1
+                                  FROM exec_command
+                                  WHERE stdout_output like '%Config.Backend.Type = aws%'
+                                            AND command = 'aerolab config backend'
+                              ) THEN 'aws'
+                   ELSE 'Unknown'
+               END
+    ) AS cloud
+FROM
+    exec_command
+WHERE
+    command = 'cat ${1}';
+" > "${AEROLAB_INVENTORY_JSON}"
+  shift
+fi
+
+if aerolab config backend 2>/dev/null | grep -q Config.Backend.Type.*gcp; then
+  LOAD_GCP_LIBRARY=(--cmd ".load /usr/local/lib/steampipe_sqlite_gcp.so")
+fi
+
+if aerolab config backend 2>/dev/null | grep -q Config.Backend.Type.*aws; then
+  LOAD_GCP_LIBRARY=(--cmd ".load /usr/local/lib/steampipe_sqlite_aws.so")
+fi
+
+sqlite3 --cmd ".load /usr/local/lib/steampipe_sqlite_exec.so" \
+	"${LOAD_GCP_LIBRARY[@]}" \
+	"${LOAD_AWS_LIBRARY[@]}" \
+	--cmd ".load /usr/local/lib/steampipe_sqlite_prometheus.so" \
+	--cmd ".read ${AEROLAB_INVENTORY_JSON}" \
+	--cmd ".read /usr/local/steampipe/aerolab_schema.sql" \
+	"$@"

@@ -1,0 +1,231 @@
+#!/usr/bin/env bash
+
+aerolab_inventory_cache() {
+    # TODO: this is a good candidate to move to an par-lib/aerolab-* library function so other code can leverage
+    if  [ ! -v _aerolab_inventory_cache ]; then
+      _aerolab_inventory_cache=/tmp/aerolab_inventory_cache.json
+      echo "Taking snapshot of aerolab inventory" >&2
+      aerolab inventory list -j > "${_aerolab_inventory_cache}"
+      echo "Inventory file at ${_aerolab_inventory_cache}" >&2
+    fi
+
+    cat "${_aerolab_inventory_cache}"
+}
+
+bootstrap() {
+  local feature_file="/etc/aerospike/features.conf"
+
+  local script_name="${0##*/}"
+
+  show_help() {
+  cat << EOF
+Usage: ${script_name} [options]
+
+This script deploys a jumpbox.
+
+    --help               display this help and exit
+    --feature-file NAME  set the path to the feature file (default: $feature_file)
+
+ENV overrides (defaults are used as example values):
+
+export AWS_INSTANCE_PROFILE=aerospike-par-eng-aerolab
+  overrides the instance profile to be used in the AWS instance
+EOF
+  }
+
+  while [[ "$#" -gt 0 ]]; do
+      case $1 in
+          --help) show_help; exit 0 ;;
+          --feature-file) feature_file="$2"; shift ;;
+          *) echo "Unknown parameter passed: $1"; exit 1 ;;
+      esac
+      shift
+  done
+
+  local SCRIPT_DIR="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
+  source "${SCRIPT_DIR}"/workstation-env-check
+  workstation_env_check
+
+  local aerolab_backend=""
+  aerolab_backend=$(aerolab config backend | grep Type | awk '{print $3}')
+
+  if [ "${aerolab_backend}" = docker ]; then
+    echo "Jumpbox not supported with aerolab docker backend"
+    return 1
+  fi
+
+  if [ "${aerolab_backend}" = azure ]; then
+    echo "Jumpbox not currently supported aerolab with azure backend"
+    return 1
+  fi
+
+  if [ "${aerolab_backend}" = gcp ]; then
+    echo "Jumpbox not currently supported aerolab with gcp backend"
+    return 1
+  fi
+
+  echo "Bootstrapping a jumpbox"
+
+  local project_name="graviton-theseus"
+  local jumpbox_name="${project_name}"
+
+  # Check that jumpbox_name is less than 20 characters long
+  if [ ${#jumpbox_name} -gt 20 ]; then
+    echo "Jumpbox name is too long, must be less than 20 characters."
+    return 1
+  fi
+
+  #check if jumpbox exists
+  if [[ $(aerolab client list -j | jq --arg jumpbox "${jumpbox_name}" '[.[] | select(.ClientName==$jumpbox)] | length') -ne 0 ]]; then
+    echo "Jumpbox, ${jumpbox_name}, exists"
+  else
+    if [ ! -f "${feature_file}" ]; then
+      echo "feature file '${feature_file}' does not exist"
+      exit 1
+    fi
+    echo "Creating a new jumpbox for ${project_name}"
+
+    local ROOT_PARTITION_GB=50
+    local DATA_PARTITION_GB=1000
+
+    # shellcheck disable=SC2155
+    local TAGS=$(cat <<EOF
+          --tags=aerolab=true \
+          --tags=jumpbox=true \
+          --tags=project=${project_name}
+EOF
+    )
+
+    # labels are for gcp only
+    # shellcheck disable=SC2155
+    local LABELS=$(cat <<EOF
+          --label=aerolab=true \
+          --label=jumpbox=true \
+          --label=project=${project_name}
+EOF
+    )
+
+    local aws_instance_profile="${AWS_INSTANCE_PROFILE:=aerospike-par-eng-aerolab}"
+    # vCPU:16 Mem:64GB
+    # shellcheck disable=SC2155
+    local AWS_BACKEND=$(cat <<EOF
+          --instance-type=m5n.4xlarge \
+          --ebs=${ROOT_PARTITION_GB},${DATA_PARTITION_GB}
+EOF
+    )
+
+    # TODO: rtss --tty
+    # shellcheck disable=SC2086
+    aerolab client create none \
+            --group-name=${jumpbox_name} \
+            --count=1 \
+            --distro=centos \
+            --distro-version=9 \
+            ${TAGS} \
+            ${LABELS} \
+            ${AWS_BACKEND} \
+            ${GCP_BACKEND}
+
+    aerolab client configure expiry --name "${jumpbox_name}" ams --expire 0
+
+    local instance_id=$(aerolab_inventory_cache | jq -r --arg jumpbox "${jumpbox_name}" \
+                     '.Clients[] | select(.ClientName==$jumpbox) | select(.NodeNo == "1") | .InstanceId')
+
+    echo "Attaching IAM role to the jumpbox in AWS"
+
+    aws ec2 associate-iam-instance-profile --instance-id "${instance_id}" \
+      --iam-instance-profile Name="${aws_instance_profile}"
+
+    echo "Applying aerolab4client_type tag to jumpbox"
+    aws ec2 create-tags --resources "${instance_id}" --tags Key=Aerolab4clientType,Value=jumpbox
+
+    echo "Enabling termination protection for jumpbox"
+    aws ec2 modify-instance-attribute --instance-id "${instance_id}" --disable-api-termination
+  fi
+
+  local jumpbox_ip=$(aerolab_inventory_cache | jq -r --arg jumpbox "${jumpbox_name}" \
+                     '.Clients[] | select(.ClientName==$jumpbox) | select(.NodeNo == "1") | .PublicIp')
+
+  local jumpbox_zone=$(aerolab_inventory_cache | jq -r --arg jumpbox "${jumpbox_name}" \
+                     '.Clients[] | select(.ClientName==$jumpbox) | select(.NodeNo == "1") | .Zone')
+
+  local aerolab_keypath="${HOME}/aerolab-keys/aerolab-${jumpbox_name}_${jumpbox_zone}"
+
+  if ! [ -e "${aerolab_keypath}" ]; then
+    echo "Key not found at path, ${aerolab_keypath}"
+    echo " this is not expected, cowardly refusing to proceed."
+    return 1
+  fi
+
+  local timeout=300
+  local interval=5
+  local elapsed=0
+
+  while true; do
+    if ssh -o ConnectTimeout=5 -o StrictHostKeyChecking=no -i ${aerolab_keypath} root@${jumpbox_ip} hostname; then
+      break
+    fi
+
+    sleep ${interval}
+    elapsed=$((elapsed + interval))
+
+    if [ ${elapsed} -ge ${timeout} ]; then
+      echo "Timeout: Jumpbox is not up and running."
+      return 1
+    fi
+  done
+
+  ## Set the hostname of the jumpbox
+  aerolab client attach -n ${jumpbox_name} -- "hostnamectl set-hostname ${jumpbox_name}"
+
+  # Upload the feature file
+  aerolab client attach -n ${jumpbox_name} -- "mkdir -p /etc/aerospike/"
+  aerolab files upload -c -n ${jumpbox_name} "${feature_file}" /etc/aerospike/features.conf
+
+  # The bare minimum to move work off the workstation, into the jumpbox
+  #  Its fair to ask why not run ansible from the workstation, which is fair
+  #  the experiment being run is to not require the workstation to deal with python / ansible
+  ssh-keygen -R ${jumpbox_ip}
+  ssh -A -o StrictHostKeyChecking=no -i ${aerolab_keypath} root@${jumpbox_ip} bash <<EOF
+          set -ex
+          dnf upgrade --refresh --assumeyes
+          dnf config-manager --set-enabled crb
+          dnf install --assumeyes https://dl.fedoraproject.org/pub/epel/epel-release-latest-9.noarch.rpm https://dl.fedoraproject.org/pub/epel/epel-next-release-latest-9.noarch.rpm
+          dnf install --assumeyes git pipx
+          pipx install --include-deps ansible
+          pipx inject ansible netaddr
+          ansible-galaxy collection install community.general --force
+          mkdir -p /workspace
+
+          THESEUS_REPO="/workspace/graviton-theseus"
+
+          if [ ! -d "\${THESEUS_REPO}" ] || [ ! -d "\${PARENG_REPO}/.git" ]; then
+            git clone -c core.sshCommand="ssh -o StrictHostKeyChecking=no" git@github.com:aerospike-community/graviton-theseus.git "\${THESEUS_REPO}"
+            pushd "\${THESEUS_REPO}"
+              if [ $(git rev-parse --abbrev-ref HEAD) != "main" ]; then
+                git checkout -b "${project_name}" "origin/${project_name}"
+              fi
+          fi
+EOF
+
+  echo
+  echo
+  echo "-------------------------------------------------------------------------------"
+  echo "                             POST SETUP STEPS"
+  echo "-------------------------------------------------------------------------------"
+  echo "ssh -A -i ${aerolab_keypath} root@${jumpbox_ip}"
+  echo "-------------------------------------------------------------------------------"
+  echo "cd /workspace/par-eng-team/projects/${jumpbox_name}"
+  echo "./00-configure-jumpbox"
+  echo "-------------------------------------------------------------------------------"
+  echo "                            SSH PORT FORWARDING"
+  echo "          parca                  grafana                prometheus"
+  echo "ssh -N -L 7070:localhost:7070 -L 3000:localhost:3000 -L 9090:localhost:9090 -i ${aerolab_keypath} root@${jumpbox_ip}"
+
+}
+
+if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
+  bootstrap "${@}"
+  exit $?
+fi
+export -f bootstrap

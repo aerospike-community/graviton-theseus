@@ -1,0 +1,11 @@
+---
+plugins:
+  - name: aws
+    version: latest
+  - name: gcp
+    version: latest
+  - name: exec
+    version: latest
+  - name: prometheus
+    version: latest
+target: "linux_amd64.tar.gz"

@@ -1,0 +1,16 @@
+---
+- name: Install gnuplot
+  ansible.builtin.package:
+    name: gnuplot
+    state: present
+
+- name: Add asbench helpers
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "/usr/bin/{{ item }}"
+    owner: root
+    group: root
+    mode: '0755'
+  loop:
+    - run_asbench
+    - make_percentile_plot

@@ -1,0 +1,49 @@
+---
+# Alertmanager configuration
+alerting:
+  alertmanagers:
+  - static_configs:
+    - targets: ['localhost:9093']
+
+# Load rules once and periodically evaluate them according to the global 'evaluation_interval'.
+rule_files:
+  - "/etc/prometheus/aerospike_rules.yaml"
+  # - "first_rules.yml"
+  # - "second_rules.yml"
+
+global:
+  scrape_interval: 5s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: hostname
+        regex: '([^:]+)(:[0-9]+)?'
+        replacement: '${1}'
+    static_configs:
+      - targets:
+{% for host in groups.get('jumpbox', []) %}
+        - '{{ hostvars[host].node_name | default(host) }}:9090'
+{% endfor %}
+
+  - job_name: 'node_exporter'
+    relabel_configs:
+      - source_labels: [__address__]
+        target_label: hostname
+        regex: '([^:]+)(:[0-9]+)?'
+        replacement: '${1}'
+    static_configs:
+      - targets:
+{% for host, details in hostvars.items() %}
+        - '{{ hostvars[host].node_name | default(host) }}:9100'
+{% endfor %}
+{% if groups.get('aerospike', []) | length > 0 %}
+
+  - job_name: 'aerospike'
+    static_configs:
+      - targets:
+{% for host in groups.get('aerospike', []) %}
+        - '{{ hostvars[host].node_name | default(host) }}:9145'
+{% endfor %}
+{% endif %}

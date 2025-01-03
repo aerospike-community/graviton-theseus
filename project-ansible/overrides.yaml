@@ -1,0 +1,6 @@
+---
+aerolab_config:
+  aws_config:
+    aws_region: us-east-1
+
+dummy_override: true

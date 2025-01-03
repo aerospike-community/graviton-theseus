@@ -1,0 +1,16 @@
+---
+- name: Download Aerolab RedHat RPM for x86_64
+  ansible.builtin.get_url:
+    url: "https://github.com/aerospike/aerolab/releases/download/{{ _aerolab_config.aerolab_tag }}/aerolab-linux-amd64-{{ _aerolab_config.aerolab_version }}.rpm"
+    dest: "/root/artifacts/aerolab-linux-amd64-{{ _aerolab_config.aerolab_version }}.rpm"
+    mode: '0440'
+
+- name: Install Aerolab from RPM
+  package:
+    name: "/root/artifacts/aerolab-linux-amd64-{{ _aerolab_config.aerolab_version }}.rpm"
+    disable_gpg_check: yes
+    state: present
+
+- name: Upgrade aerolab to edge
+  ansible.builtin.command:
+    cmd: aerolab upgrade --edge

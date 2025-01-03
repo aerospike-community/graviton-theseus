@@ -1,0 +1,45 @@
+---
+- name: Generate an SSH key pair
+  ansible.builtin.openssh_keypair:
+    path: "{{ artifacts_dir }}/id_ed25519"
+    type: ed25519
+  register: ssh_key
+  delegate_to: localhost
+  run_once: true
+
+- name: Ensure .ssh directory exists on the nodes
+  ansible.builtin.file:
+    path: /root/.ssh
+    state: directory
+    mode: '0700'
+    owner: root
+    group: root
+
+- name: Copy the private key to the nodes
+  ansible.builtin.copy:
+    src: "{{ artifacts_dir }}/id_ed25519"
+    dest: /root/.ssh/id_ed25519
+    mode: '0600'
+    owner: root
+    group: root
+
+- name: Copy the public key to the nodes
+  ansible.builtin.copy:
+    src: "{{ artifacts_dir }}/id_ed25519.pub"
+    dest: /root/.ssh/id_ed25519.pub
+    mode: '0644'
+    owner: root
+    group: root
+
+- name: Add team keys to authorized_keys
+  ansible.posix.authorized_key:
+    user: root
+    state: present
+    key: "{{ item.key }}"
+  loop: "{{ team_keys }}"
+
+- name: Add generated key to authorized_keys
+  ansible.posix.authorized_key:
+    user: root
+    state: present
+    key: "{{ ssh_key.public_key }}"

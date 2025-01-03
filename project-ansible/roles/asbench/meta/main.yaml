@@ -1,0 +1,4 @@
+---
+dependencies:
+  # run_asbench uses a petname for log directories
+  - role: petname

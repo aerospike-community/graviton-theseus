@@ -1,0 +1,23 @@
+---
+- name: Install sos
+  ansible.builtin.package:
+    name: "{{ sos_package_name }}"
+    state: present
+
+- name: Check if sos plugins directory exists
+  ansible.builtin.stat:
+    path: "{{ sos_plugins_directory }}"
+  register: sos_plugins_dir
+
+- name: Install sosreport plugins
+  ansible.builtin.copy:
+    src: "{{ item }}"
+    dest: "{{ sos_plugins_directory }}/{{ item }}"
+    owner: root
+    group: root
+    mode: '0644'
+  loop:
+    - aerolab.py
+    - aerospike.py
+  when: sos_plugins_dir.stat.exists
+

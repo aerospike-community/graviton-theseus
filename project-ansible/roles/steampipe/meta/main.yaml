@@ -1,0 +1,4 @@
+---
+dependencies:
+  # Depends on artifacts_dir var
+  - role: artifacts_dir

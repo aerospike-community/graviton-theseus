@@ -1,0 +1,39 @@
+127.0.0.1 localhost
+::1       localhost ip6-localhost ip6-loopback
+ff02::1   ip6-allnodes
+ff02::2   ip6-allrouters
+
+{% if hostvars[inventory_hostname].node_name is not defined %}
+{{ ansible_default_ipv4.address }} {{ ansible_hostname }}
+
+{% endif %}
+## This /etc/hosts file is controled by the par-eng ansible
+##
+## The intention is to enable both dynamic aerolab inventory or a static
+## inventory file.
+##
+## [jumpbox]
+## localhost
+##
+## [client]
+## 10.10.10.10 node_name=foobar
+## 10.10.10.11 node_name=foobaz
+##
+## [aerospike]
+## 10.10.11.10 node_name=node-1
+## 10.10.11.11 node_name=node-2
+##
+## Then you can pass the static inventory:
+##
+## ANSIBLE_STDOUT_CALLBACK=unixy ansible-playbook \
+## -i graviton-theseus/project-ansible/inventory \
+## project-ansible/jumpbox.yaml
+
+# TODO: add asd-00n and asc-00n hostnames
+{% for host, details in hostvars.items() %}
+{% if host | ansible.utils.ipaddr != False %}
+{{ host }} {{ details.instance_id | default('') }} {{ details.node_name | default('') }}{% if host in groups['jumpbox'] %} jumpbox{% endif %}
+
+{% endif %}
+{% endfor %}
+169.254.169.254 metadata.google.internal

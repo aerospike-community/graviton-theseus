@@ -1,0 +1,32 @@
+---
+- name: Dynamically group hosts by architecture
+  hosts: all
+  gather_facts: false
+  roles:
+    - arch_inventory
+
+- name: Common Tasks
+  hosts: all
+  remote_user: root
+  gather_facts: true
+  roles:
+    - access
+    - hostfile
+    - genders
+    - motd
+    - sos
+    - kernel_settings
+
+- name: LGS
+  hosts: tools
+  remote_user: root
+  gather_facts: false
+  roles:
+    - node_exporter
+    - asbench
+
+- name: Update the prometheus configuration
+  hosts: ams
+  gather_facts: false
+  roles:
+    - ams_prometheus

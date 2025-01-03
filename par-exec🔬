@@ -1,0 +1,248 @@
+#!/bin/bash
+
+set -m
+
+DIRNAME=/data/artifacts
+
+if command -v unbuffer >/dev/null 2>&1; then
+  UNBUFFER="$(which unbuffer)"
+fi
+
+show_help() {
+cat << EOF
+Usage: ${0##*/} [options]
+
+This script runs a command before collecting artifacts
+
+    --help                        display this help and exit
+    --dirname NAME                where to store logs (default: $DIRNAME)
+    --scriptname NAME             override the script name
+    --postprocess                 call <basescript> with --postprocess
+    --skip-collect                do not collect system artifacts
+
+EOF
+}
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --help) show_help; exit 0 ;;
+        --dirname) DIRNAME="$2"; shift ;;
+        --scriptname) SCRIPT_NAME="$2"; shift ;;
+        --postprocess) POSTPROCESS=true; ;;
+        --skip-collect) SKIP_COLLECT=true; ;;
+        --) shift;
+		BASE_COMMAND=$(basename $1)
+		FULL_PATH=$1
+		COMMAND="$*"
+		break;;
+
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+if [ -v ${SCRIPT_NAME} ]; then
+  SCRIPT_NAME="${BASE_COMMAND}"
+fi
+
+# date has format 2024-08-27-163900+0000
+TEST_DIR="${DIRNAME}/$(date '+%F-%H%M%S%z')-${SCRIPT_NAME}"
+mkdir -p "${TEST_DIR}"
+
+generate_dashboard() {
+  local workload_start=$1
+  local workload_end=$(($(date -d "+2 minutes" +%s%N) / 1000000))
+
+  local test_dir="$2"
+  local dashboard_file="${test_dir}/dashboard.md"
+
+  mkdir -p "${test_dir}"
+
+  local inventory_file=$(mktemp)
+
+  aerolab inventory list -j > "${inventory_file}"
+
+  local aerospike_count=$(
+    echo "select count(*) from aerolab_cluster where project = '${PROJECT_NAME}' and cluster_type = 'aerospike'" | \
+        steampipe ${inventory_file} 2> /dev/null
+  )
+
+  local ags_count=$(
+    echo "select count(*) from aerolab_cluster where project = '${PROJECT_NAME}' and cluster_type = 'graph'" | \
+        steampipe ${inventory_file} 2> /dev/null
+  )
+
+  local avs_count=$(
+    echo "select count(node_name) from aerolab_instance where project = '${PROJECT_NAME}' and json_extract(tags, '$.aerolab4client_type') in ('avs', 'vector');" | \
+        steampipe ${inventory_file} 2> /dev/null
+  )
+
+  {
+    echo
+    echo "  Node Exporter"
+    echo
+    echo "select node_name from aerolab_instance where project = '${PROJECT_NAME}' order by cluster_type;" | steampipe ${inventory_file} 2> /dev/null | while read -r node_name; do
+    echo "  + [${node_name}](http://localhost:3000/d/rYdddlPWk/node-exporter-full?orgId=1&from=${workload_start}&to=${workload_end}&var-datasource=default&var-job=node_exporter&var-node=${node_name}:9100)"
+    done
+
+    if [ "${aerospike_count}" -gt 0 ]; then
+      echo
+      echo "  Aerospike"
+      echo
+      echo "  [cluster-overview](http://localhost:3000/d/dR0dDRHWz/cluster-overview?l?orgId=1&from=${workload_start}&to=${workload_end}&var-datasource=default&var-job_name=aerospike)"
+      echo
+      echo "  [namespace-view](http://localhost:3000/d/zGcUKcDZz/namespace-view?l?orgId=1&from=${workload_start}&to=${workload_end}&var-datasource=default&var-job_name=aerospike)"
+    fi
+
+    echo
+    echo "  Continuous Profiling"
+    echo
+    echo "  [parca](http://localhost:7070/?time_selection_a=absolute%3a${workload_start}-${workload_end}&sum_by_a=comm)"
+
+    if [ "${ags_count}" -gt 0 ]; then
+      echo
+      echo "  AGS"
+      echo
+      echo "  [aerospike-graph-service](http://localhost:3000/d/mq18dahSk/aerospike-graph-service?orgId=1&from=${workload_start}&to=${workload_end}&var-datasource=default&var-job_name=graph)"
+    fi
+
+    if [ "${avs_count}" -gt 0 ]; then
+      echo
+      echo "  AVS"
+      echo
+      echo "  [aerospike-vector-search](http://localhost:3000/d/d2ccf9f6-af9b-4ba1-a4d1-42ccfddfa785/aerospike-vector-search?orgId=1&from=${workload_start}&to=${workload_end}&var-datasource=default&var-job_name=vector)"
+      echo
+      echo "  [aerospike-hdf](http://localhost:3000/d/fzUPYeJIkhdf/aerospike-hdf?orgId=1&from=${workload_start}&to=${workload_end})"
+    fi
+
+    echo
+  } > >(tee -a "${dashboard_file}") 2> >(tee -a "${dashboard_file}" >&2)
+}
+
+collect_artifacts() {
+  local result_dir="$1"
+  local collect_log="${resultdir}/sysinfo_collect.log"
+
+  mkdir -p "${resultdir}"
+
+  echo "collecting artifacts..."
+  {
+    sosdir=$(mktemp -u)
+    pdsh -A mkdir -p "${sosdir}"
+    pdsh -A sos report --batch --plugin-option docker.logs --tmp-dir "${sosdir}"
+
+    echo "select
+             CASE WHEN cluster_type = 'custom' THEN json_extract(tags, '$.aerolab4client_type') ELSE cluster_type END as cluster_type
+             from aerolab_instance where project = '${PROJECT_NAME}'
+             group by CASE WHEN cluster_type = 'custom' THEN json_extract(tags, '$.aerolab4client_type') ELSE cluster_type END;" | steampipe 2> /dev/null | while read -r cluster_type; do
+      mkdir "${resultdir}/${cluster_type}"
+      rpdcp -g "group=${cluster_type}" "${sosdir}"/'sos*' "${resultdir}/${cluster_type}"
+    done
+
+    pdsh -A 'rm -rf ${sosdir}'
+  }  2>&1 > "$collect_log"
+
+  echo "done collecting artifacts in ${TEST_DIR}" | tee >( tr -d '\n' | cat - <(echo " | ANNOTATE GRAFANA") | systemd-cat -t $(basename ${0}) )
+}
+
+wait_for_pids() {
+    local pids=("$@")  # Accept a list of PIDs as arguments
+    local timeout=300
+    local interval=1
+    local elapsed=0
+
+    while [[ ${#pids[@]} -gt 0 ]]; do
+        if (( elapsed >= timeout )); then
+            echo "timeout reached these PIDs did not finish in time: ${pids[*]}"
+            return 1
+        fi
+
+        # Filter out finished PIDs from the list
+        for i in "${!pids[@]}"; do
+            if ! kill -0 "${pids[$i]}" 2>/dev/null; then
+                unset 'pids[i]'
+            fi
+        done
+
+        # Re-index the array to remove empty gaps after unset
+        pids=("${pids[@]}")
+
+        sleep "$interval"
+        (( elapsed += interval ))
+    done
+
+    return 0  # Exit with success
+}
+
+get_child_processes() {
+    local parent_pid=$1
+    local children=$(pgrep -P "$parent_pid")
+
+    for child in $children; do
+        echo "$child"
+        get_child_processes "$child"
+    done
+}
+
+cleanup() {
+  trap - INT TERM
+  signal=$1
+
+  if [ -v child_pid ]; then
+    echo
+    local child_pids=$(get_child_processes $child_pid)
+
+    for pid in $child_pids; do
+      kill -"$signal" -- "$pid"
+    done
+
+    wait_for_pids "${child_pids}"
+  fi
+
+  local resultdir="${TEST_DIR}/sysinfo/"
+
+  generate_dashboard "${workload_start}" "${TEST_DIR}"
+  if ! [ -v SKIP_COLLECT ]; then
+    collect_artifacts "${result_dir}"
+  fi
+
+  exit "${RETURN_CODE}"
+}
+
+RETURN_CODE=1
+workload_start=$(($(date +%s%N) / 1000000))
+logfile="${TEST_DIR}/output_${SCRIPT_NAME}.log"
+
+trap "cleanup INT" INT
+trap "cleanup TERM" TERM
+
+# Execute the command and capture stdout and stderr
+{
+    echo "+ ${COMMAND}" | tee >( tr -d '\n' | cat - <(echo " | ANNOTATE GRAFANA") | systemd-cat -t $(basename ${0}) )
+    echo "+++++++++++++++++++++++++"
+    echo "${COMMAND}" > "${TEST_DIR}/command"
+
+    # Background the process so that we can wait for it later
+    eval "${UNBUFFER} ${COMMAND} &"
+    child_pid=$!
+
+} > >(tee -a "$logfile") 2> >(tee -a "$logfile" >&2)
+
+wait "$child_pid"
+RETURN_CODE=$?
+
+unset child_pid
+
+echo "-------------------------"
+echo "- ${COMMAND}" | tee >( tr -d '\n' | cat - <(echo " | ANNOTATE GRAFANA") | systemd-cat -t $(basename ${0}) )
+
+if [ -v POSTPROCESS ]; then
+postprocess_log="${TEST_DIR}/postprocess.log"
+    echo
+    echo "postprocessing..."
+    {
+      "${FULL_PATH}" --postprocess "${TEST_DIR}"
+    } 2>&1 > "${postprocess_log}"
+fi
+
+cleanup

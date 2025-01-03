@@ -1,0 +1,8 @@
+---
+- name: Template Prometheus Configuration
+  template:
+    src: templates/prometheus.j2
+    dest: /etc/prometheus/prometheus.yml
+    owner: prometheus
+    group: prometheus
+  notify: "Restart prometheus"

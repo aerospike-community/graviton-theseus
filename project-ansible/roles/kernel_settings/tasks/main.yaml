@@ -1,0 +1,21 @@
+---
+- name: Disable SELinux
+  selinux:
+    state: disabled
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Check if the host needs reboot
+  ansible.builtin.shell: grep -q 'psi=1' /proc/cmdline || echo 'reboot needed'
+  register: reboot_check
+  changed_when: reboot_check.stdout != ''
+  notify: update-grub
+  ignore_errors: true
+  when: ansible_facts['os_family'] == "RedHat"
+
+- name: Trigger handlers
+  meta: flush_handlers
+
+- name: Wait for the host to come back
+  wait_for_connection:
+    timeout: 300
+  when: reboot_result is defined and reboot_result.changed

@@ -1,0 +1,19 @@
+- name: Set Aerolab Configuration
+  set_fact:
+    _aerolab_config: "{{ aerolab_default_config | combine(aerolab_config | default({}), recursive=True) }}"
+    aerolab_working_dir: "{{ artifacts_dir }}"
+
+- name: Check that the features file exists
+  stat:
+    path: "{{ _aerolab_config.feature_file }}"
+  register: result_file
+- assert:
+    that:
+      - result_file.stat.exists
+    fail_msg: "The feature file does not exist"
+    success_msg: "The feature file exists"
+
+- name: Install Aerolab
+  import_tasks: "{{ role_path }}/tasks/install.yaml"
+- name: Configure Aerolab
+  import_tasks: "{{ role_path }}/tasks/configure.yaml"

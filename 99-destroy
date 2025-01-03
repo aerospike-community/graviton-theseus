@@ -1,0 +1,15 @@
+#!/usr/bin/bash
+
+set -ex
+
+echo "Destroying clusters"
+aerolab cluster destroy -f -n "${INTEL_AEROSPIKE_CLUSTER_NAME}" || echo "cluster not destroyed"
+
+aerolab cluster destroy -f -n "${TARGET_CLUSTER}" || echo "cluster not destroyed"
+
+aerolab client destroy -f -n "${TARGET_CLIENT_CLUSTER}" || echo "cluster not destroyed"
+
+aerolab client destroy -f -n "${AMS_CLUSTER_NAME}" || echo "cluster not destroyed"
+
+echo "Running Ansible"
+ANSIBLE_STDOUT_CALLBACK=unixy ansible-playbook -i /usr/local/bin/aerolab-ansible "${CURRENT_PROJECT_ROOT}"/project-ansible/project_environment.yaml

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+
+set -e
+
+while [[ "$#" -gt 0 ]]; do
+    case $1 in
+        --postprocess) POSTPROCESS=true; RESULTS_DIR="$2"; shift ;;
+
+        *) echo "Unknown parameter passed: $1"; exit 1 ;;
+    esac
+    shift
+done
+
+if [ -v POSTPROCESS ]; then
+    {
+      echo "running asbench_workload.sh postprocess..."
+      "${CURRENT_PROJECT_ROOT}"/project-scripts/asbench_workload.sh \
+            --postprocess "${RESULTS_DIR}" --client-cluster-name "${TARGET_CLIENT_CLUSTER}"
+    } 2>&1
+
+    exit 0
+fi
+
+get_child_processes() {
+    local parent_pid=$1
+    local children=$(pgrep -P "$parent_pid")
+
+    for child in $children; do
+        echo "$child"
+    done
+}
+
+# TODO: This script will crash out the controlling terminal when SIGINT is delivered. I checked the signal handling,
+#       and it does _not_ look like the interactive terminal is getting a signal, so I'm not sure what is causing it.
+cleanup() {
+	local child_pids=$(get_child_processes $workload_pid)
+
+	for pid in $child_pids; do
+		kill -SIGTERM "${pid}"
+	done
+
+  	exit 0
+}
+
+trap "cleanup" INT TERM
+
+pdsh -g ${TARGET_CLIENT_CLUSTER} 'rm -rf /var/log/asbench*'
+
+petname=${PETNAME:-$(petname)}
+tps_multiplier=${TPS_MULTIPLIER:-1}
+
+total_tps=$(perl -le "print int((301734+75416) * $tps_multiplier)")
+
+tps_per_bin=$(( total_tps / 7 ))
+timeout=${TIMEOUT:-600}
+
+read_percentage=${READ_PERCENTAGE:-80}
+
+echo "starting workload with tps: ${total_tps} petname: ${petname} timeout: ${timeout}"
+echo
+
+{
+	namespace="user-profile"
+	index=0
+        for bin_size in 5720 4096 2028 1024 768 512 256; do
+		par-exec🔬 --scriptname "${petname}-$(basename $0)-${namespace}-B${bin_size}" --skip-collect -- \
+		  "${CURRENT_PROJECT_ROOT}/project-scripts/asbench_workload.sh" \
+			--cluster-name "${TARGET_CLUSTER}" \
+			--client-cluster-name "${TARGET_CLIENT_CLUSTER}" \
+			--start-key $(( USER_PROFILE_ENTRIES_PER_DATUM_SIZE * index )) \
+			--total-keys "${USER_PROFILE_ENTRIES_PER_DATUM_SIZE}" \
+			--bin-size ${bin_size} \
+			 --compression-ratio 0.25 \
+			--namespace ${namespace} \
+			--workload-type gaussian \
+			--total-tps ${tps_per_bin} \
+			--read-percentage ${read_percentage} \
+			--client-count 2 \
+			--standard-deviation 7 \
+	                --timeout "${timeout}" &
+	
+		index=$(( index + 1 ))
+	done
+	
+	namespace="campaign"
+	index=0
+	for bin_size in 256; do
+		par-exec🔬 --scriptname "${petname}-$(basename $0)-${namespace}-B${bin_size}" --skip-collect -- \
+		  "${CURRENT_PROJECT_ROOT}/project-scripts/asbench_workload.sh" \
+			--cluster-name "${TARGET_CLUSTER}" \
+			--client-cluster-name "${TARGET_CLIENT_CLUSTER}" \
+			--start-key 0 \
+			--total-keys "${CAMPAIGN_ENTRIES}" \
+			--bin-size ${bin_size} \
+			--compression-ratio 0.25 \
+			--namespace ${namespace} \
+			--workload-type gaussian \
+			--total-tps $(perl -le "print int(9580 * $tps_multiplier)") \
+			--read-percentage 50 \
+			--client-count 2 \
+			--standard-deviation 7 \
+	                --timeout "${timeout}" &
+	
+		index=$(( index + 1 ))
+	done
+
+	wait
+} 2>&1 >/dev/null &
+
+workload_pid=$!
+
+echo -n "CTRL-C to stop and clean up workload..."
+wait

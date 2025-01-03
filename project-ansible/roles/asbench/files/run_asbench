@@ -1,0 +1,30 @@
+#!/bin/bash
+
+ASBENCH_DATE=$(date +"%Y-%m-%d_%H-%M-%S")
+ASBENCH_DIR="/var/log/asbench_${ASBENCH_DATE}_$(petname)"
+
+EXTRAS=""
+echo "$@" |grep -- '--latency' >/dev/null 2>&1
+[ $? -ne 0 ] && EXTRAS="--latency"
+echo "$@" |grep -- '--percentiles' >/dev/null 2>&1
+if [ $? -ne 0 ]
+then
+  EXTRAS="${EXTRAS} --percentiles 50,90,99,99.9,99.99"
+else
+  echo "$@" |grep ' 50,90,99,99.9,99.99' >/dev/null 2>&1
+  if [ $? -ne 0 ]
+  then
+    echo "WARNING: changing the first 5 percentile buckets will cause asbench latency graphs in AMS dashboard to be incorrect"
+  fi
+fi
+
+echo "$@" |grep -- '--output-file' >/dev/null 2>&1
+[ $? -ne 0 ] && EXTRAS="${EXTRAS} --output-file ${ASBENCH_DIR}/latencies.out"
+
+echo "$@" |grep -- '--hdr-hist' >/dev/null 2>&1
+[ $? -ne 0 ] && EXTRAS="${EXTRAS} --hdr-hist ${ASBENCH_DIR}"
+
+mkdir -p ${ASBENCH_DIR}
+
+touch "${ASBENCH_DIR}/asbench.log"
+nohup asbench "$@" ${EXTRAS} >> "${ASBENCH_DIR}/asbench.log" 2>&1 &

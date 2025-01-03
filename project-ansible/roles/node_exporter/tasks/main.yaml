@@ -1,0 +1,59 @@
+---
+- name: Create node_exporter group
+  ansible.builtin.group:
+    name: node_exporter
+    system: yes
+    state: present
+
+- name: Create node_exporter user
+  ansible.builtin.user:
+    name: node_exporter
+    create_home: no
+    group: node_exporter
+    shell: '/sbin/nologin'
+    system: yes
+    state: present
+
+- name: Setup directories
+  ansible.builtin.file:
+    path: "{{ item }}"
+    state: directory
+    owner: node_exporter
+    group: node_exporter
+  loop:
+    - /etc/node_exporter
+
+- name: Download node_exporter
+  ansible.builtin.get_url:
+    url: "https://github.com/prometheus/node_exporter/releases/download/v{{ node_exporter_version }}/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_architecture }}.tar.gz"
+    dest: "{{ artifacts_dir }}/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_architecture }}.tar.gz"
+    checksum: "{{ node_exporter_checksum }}"
+
+- name: Unzip node_exporter
+  ansible.builtin.unarchive:
+    src: "{{ artifacts_dir }}/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_architecture }}.tar.gz"
+    remote_src: yes
+    dest: /root/artifacts
+
+- name: Install node_exporter binary
+  ansible.builtin.copy:
+    src: "{{ artifacts_dir }}/node_exporter-{{ node_exporter_version }}.linux-{{ node_exporter_architecture }}/node_exporter"
+    remote_src: yes
+    dest: /usr/local/bin/node_exporter
+    owner: node_exporter
+    group: node_exporter
+    mode: 0755
+
+- name: Update node_exporter.service
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/node_exporter.service"
+    dest: /etc/systemd/system/node_exporter.service
+    owner: root
+    group: root
+  notify: "Reload systemd"
+
+- name: Run node_exporter.service
+  ansible.builtin.systemd:
+    name: node_exporter
+    enabled: yes
+    state: started

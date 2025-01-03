@@ -1,0 +1,9 @@
+---
+- name: Set variables
+  set_fact:
+    artifacts_dir: /root/artifacts
+
+- name: Create artifacts directory
+  ansible.builtin.file:
+    path: "{{ artifacts_dir }}"
+    state: directory

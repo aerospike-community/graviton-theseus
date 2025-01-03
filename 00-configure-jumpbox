@@ -1,0 +1,47 @@
+#!/usr/bin/env bash
+
+set -e
+
+configure() {
+    echo "Configuring the jumpbox"
+
+    timedatectl set-timezone UTC
+
+    local script_dir="$(realpath "$(dirname "${BASH_SOURCE[0]}")")"
+
+    if [ ! -d "${script_dir}/venv" ]; then
+        python -m venv "${script_dir}/venv"
+    fi
+
+    if [ -z "${CURRENT_PROJECT_ROOT}" ]; then
+        echo "The very first configure runs before direnv is installed"
+        echo " therefore we will source the .envrc once manually"
+        source "${script_dir}/.envrc"
+    fi
+
+    INVENTORY="${CURRENT_PROJECT_ROOT}"/project-ansible/inventory
+    DYNAMIC_INVENTORY=/usr/local/bin/aerolab-ansible
+    if [ -f "${DYNAMIC_INVENTORY}" ]; then
+        INVENTORY="${DYNAMIC_INVENTORY}"
+    fi
+
+    ANSIBLE_ENV_PLAYBOOK="${CURRENT_PROJECT_ROOT}"/project-ansible/jumpbox.yaml
+
+    echo "Runing ansible"
+    ANSIBLE_STDOUT_CALLBACK=unixy ansible-playbook \
+        -i "${INVENTORY}" \
+        --extra-vars @"${CURRENT_PROJECT_ROOT}"/project-ansible/overrides.yaml \
+        "${CURRENT_PROJECT_ROOT}"/project-ansible/jumpbox.yaml
+
+    direnv allow
+
+    echo "================================================================"
+    echo " Bootstrap is complete. Please reboot to complete installation."
+    echo "================================================================"
+}
+
+if [[ "${BASH_SOURCE[0]}" = "${0}" ]]; then
+  configure "${@}"
+  exit $?
+fi
+export -f configure

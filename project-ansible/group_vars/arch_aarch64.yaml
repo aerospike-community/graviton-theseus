@@ -1,0 +1,16 @@
+---
+# alloy
+alloy_architecture: arm64
+alloy_checksum: sha256:96c0d015907bede2f405a9621ee9632f0c0a6f4fcdb47287df65e7fa10f86953
+
+# envsetup
+direnv_architecture: arm64
+direnv_checksum: sha256:0249e2d1fbbac8752c6d2d515c117519b3f10799253d13a0867dddb07106e5cd
+
+# parca_agent
+parca_agent_architecture: aarch64
+parca_agent_checksum: sha256:23d0f1f59afa13540252d6c6d492d11942b712ede7b3c4b20a86543ea459d12e
+
+# node_exporter
+node_exporter_architecture: arm64
+node_exporter_checksum: sha256:f99ea62cec600bca5c926d300522d7a3bb797592d70dc1bcdc20b57811f1d439

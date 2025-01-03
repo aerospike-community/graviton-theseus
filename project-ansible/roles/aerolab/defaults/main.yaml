@@ -1,0 +1,7 @@
+---
+aerolab_default_config:
+  aerolab_tag: 7.5.2
+  aerolab_version: 7.5.2
+  feature_file: /etc/aerospike/features.conf
+  aws_config:
+    aws_region: us-east-1

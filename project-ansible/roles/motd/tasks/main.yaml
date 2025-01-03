@@ -1,0 +1,12 @@
+- name: Set MOTD with ASCII art
+  file:
+    path: /etc/motd
+    state: touch
+    owner: root
+    group: root
+    mode: '0644'
+
+- name: Set ASCII art as MOTD
+  copy:
+    src: the_art.motd
+    dest: /etc/motd

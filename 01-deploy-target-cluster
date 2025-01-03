@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+
+set -ex
+
+source "${CURRENT_PROJECT_ROOT}/project-scripts/common.sh"
+
+aerolab cluster create \
+	-n "${TARGET_CLUSTER}" \
+	-c "${TARGET_CLUSTER_INSTANCE_COUNT}" \
+	--instance-type "${TARGET_CLUSTER_INSTANCE_TYPE}" \
+	-o "${CURRENT_PROJECT_ROOT}/project-config/aerospike.conf" \
+	-v '7.1.*' \
+	-s 'n' \
+	--distro=centos \
+	--distro-version=9 \
+	--owner="${PROJECT_NAME}" \
+	--tags=project="${PROJECT_NAME}" || echo "cluster not deployed"
+
+aerolab cluster add exporter -n "${TARGET_CLUSTER}"
+
+if [[ $(aerolab client list -j | jq --arg ams_name "${AMS_CLUSTER_NAME}" '[.[] | select (.ClientType=="ams") | select(.ClientName==$ams_name)] | length') -eq 0 ]]; then
+	echo "Starting ams..."
+	aerolab client create ams \
+		-n "${AMS_CLUSTER_NAME}" \
+		-s ${TARGET_CLUSTER} \
+		-I ${AMS_INSTANCE_TYPE} \
+		--owner="${PROJECT_NAME}" \
+		--tags=project="${PROJECT_NAME}"
+fi
+
+
+refresh_known_hosts $(aerolab client list -j | jq -r --arg project_name "${PROJECT_NAME}" '.[] | select(.AwsTags.project == $project_name).PrivateIp')
+refresh_known_hosts $(aerolab cluster list -j | jq -r --arg project_name "${PROJECT_NAME}" '.[] | select(.AwsTags.project == $project_name).PrivateIp')
+
+ANSIBLE_STDOUT_CALLBACK=unixy ansible-playbook \
+	-f 64 \
+	-i /usr/local/bin/aerolab-ansible \
+	--extra-vars @"${CURRENT_PROJECT_ROOT}"/project-ansible/overrides.yaml \
+	"${CURRENT_PROJECT_ROOT}"/project-ansible/project_environment.yaml
+
+refresh_known_hosts $(nodeattr -n -A)
+
+pdcp -g ${TARGET_CLUSTER} "${CURRENT_PROJECT_ROOT}/project-config/aerospike.conf" /etc/aerospike/aerospike.conf
+
+reconfigure_drives ${TARGET_CLUSTER}
+
+echo "Copy aerospike prometheus exporter and configuration"
+if [ -f /root/artifacts/aerospike-prometheus-exporter ]; then
+	# Gathering index-pressure statistics is very costly, so copy a custom build of the exporter that doesn't collect
+	# them.
+	pdsh -g ${TARGET_CLUSTER} systemctl stop aerospike-prometheus-exporter
+	pdcp -g ${TARGET_CLUSTER} /root/artifacts/aerospike-prometheus-exporter /usr/bin/aerospike-prometheus-exporter
+fi
+
+pdcp -g ${TARGET_CLUSTER} "${CURRENT_PROJECT_ROOT}/project-config/ape.toml" /etc/aerospike-prometheus-exporter/ape.toml
+pdsh -g ${TARGET_CLUSTER} systemctl restart aerospike-prometheus-exporter
+
+echo "Start ${TARGET_CLUSTER} Cluster"
+pdsh -g ${TARGET_CLUSTER} systemctl enable aerospike
+pdsh -g ${TARGET_CLUSTER} systemctl start aerospike

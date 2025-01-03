@@ -1,0 +1,3 @@
+---
+sos_package_name: sosreport
+sos_plugins_directory: /usr/lib/python3/dist-packages/sos/report/

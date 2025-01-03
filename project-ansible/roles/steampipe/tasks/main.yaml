@@ -1,0 +1,66 @@
+---
+- name: Set facts for download URLs and filenames
+  set_fact:
+    query_plugins: "{{ query_plugins | default([]) + [{'name': item.name, 'url': url_template, 'version': item.version, 'filename': filename}] }}"
+  loop: "{{ plugins }}"
+  vars:
+    url_template: "https://github.com/turbot/steampipe-plugin-{{ item.name }}/releases/{{ 'download/' + item.version if item.version != 'latest' else 'latest/download' }}/steampipe_sqlite_{{ item.name }}.{{ target }}"
+    filename: "steampipe_sqlite_{{ item.name }}.{{ target }}"
+- name: Display all URLs
+  debug:
+    var: query_plugins
+
+- name: Install steampipe requirements
+  ansible.builtin.dnf:
+    name:
+      - sqlite
+      - sqlite-devel
+      - tar
+    state: present
+  when: ansible_distribution == "CentOS"
+
+- ansible.builtin.apt:
+    name:
+      - sqlite
+      - tar
+    state: present
+  when: ansible_distribution == "Ubuntu"
+
+- name: Create expected folders
+  ansible.builtin.file:
+    path: "/usr/local/{{ item }}"
+    state: directory
+    mode: "0755"
+  loop:
+    - steampipe
+    - bin
+    - lib
+
+- name: Download plugins
+  ansible.builtin.get_url:
+    url: "{{ item.url }}"
+    dest: "{{ artifacts_dir}}/{{ item.filename }}"
+    mode: '0755'
+  loop: "{{ query_plugins }}"
+  loop_control:
+    loop_var: item
+
+- name: Extract plugins
+  ansible.builtin.unarchive:
+    src: "{{ artifacts_dir }}/{{ item.filename }}"
+    dest: "/usr/local/lib/"
+    remote_src: yes
+  loop: "{{ query_plugins }}"
+  when: item.filename is defined
+
+- name: Install steampipe wrapper script
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/steampipe"
+    dest: "/usr/local/bin/steampipe"
+    mode: 0755
+
+- name: Install steampipe schema
+  ansible.builtin.copy:
+    src: "{{ role_path }}/files/aerolab_schema.sql"
+    dest: "/usr/local/steampipe/aerolab_schema.sql"
+    mode: 0755

@@ -1,0 +1,4 @@
+export TARGET_CLUSTER="theseus-g4-asd"
+export TARGET_CLUSTER_INSTANCE_TYPE="i8g.16xlarge"
+
+export TARGET_CLIENT_CLUSTER="theseus-g4-lgs"
